@@ -1,4 +1,4 @@
-(ns codingame.mark1
+(ns codingame.algo.mark1
   (:require
     [clojure.string :as str]
     [codingame.core :refer :all]))

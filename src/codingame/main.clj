@@ -83,7 +83,10 @@
                         (grass pos))]
             (set-tile game pos tile')))
         %
-        (set (concat recycled-blue recycled-red))))))
+        (set (concat recycled-blue recycled-red)))
+      (assoc %
+        :tiles-blue (tiles % :blue)
+        :tiles-red  (tiles % :red)))))
 
 (defn reset-game []
   (let [turn0 (sample-game)
@@ -105,23 +108,14 @@
 (def face-ui
   (Typeface/makeFromName "Case Micro" FontStyle/NORMAL))
 
-(def fill-blue
-  (paint/fill 0xFF0033CC))
+(def fill-scrap-neutral
+  (paint/fill 0xFFB1AA98))
 
-(def fill-red
-  (paint/fill 0xFFCC3300))
+(def fill-scrap-blue
+  (paint/fill 0xFF3B68CF))
 
-(def color-scrap
-  (unchecked-int 0xFFB1AA98))
-
-(def color-scrap-blue
-  (unchecked-int 0xFF3B68CF))
-
-(def color-scrap-red
-  (unchecked-int 0xFFB34229))
-
-(def fill-unit
-  (paint/fill 0xFFFFFFFF))
+(def fill-scrap-red
+  (paint/fill 0xFFB34229))
 
 (def icon-unit
   (ui/svg "resources/unit.svg"))
@@ -145,14 +139,12 @@
               :when (> scrap 0)
               :let [left  (* tile-size (:x pos))
                     top   (* tile-size (:y pos))
-                    rect  (core/irect-xywh left top (- tile-size 2) (- tile-size 2))
-                    alpha 255]]
-        (.setColor fill
-          (cond
-            (= :neutral owner) (Color/withA color-scrap alpha)
-            (= :blue owner)    (Color/withA color-scrap-blue alpha)
-            (= :red owner)     (Color/withA color-scrap-red alpha)))
-        (canvas/draw-rect canvas rect fill)
+                    rect  (core/irect-xywh left top (- tile-size 2) (- tile-size 2))]]
+        (canvas/draw-rect canvas rect
+          (case owner
+            :neutral fill-scrap-neutral
+            :blue    fill-scrap-blue
+            :red     fill-scrap-red))
 
         (doseq [x (range 0 scrap)]
           (canvas/draw-rect canvas (core/rect-xywh (+ left 4 (* x 8)) (+ top 4) 6 6) fill-text))
@@ -166,9 +158,41 @@
           (core/draw icon-recycled ctx rect canvas))
 
         (when recycler?
-          (core/draw icon-recycler ctx rect canvas))
+          (core/draw icon-recycler ctx rect canvas))))))
 
-        ))))
+(def stroke-graph-blue
+  (paint/stroke 0x800033CC 4))
+
+(def stroke-graph-red
+  (paint/stroke 0x80CC3300 4))
+
+(defn paint-tiles [ctx canvas size]
+  (canvas/clear canvas 0xFFFFFFFF)
+  (let [step (/ (:x size) (inc (:max @*turn)))]
+    (doseq [[i g1 g2] (zip (range (inc (:max @*turn))) @*games (next @*games))]
+      (canvas/draw-line canvas
+        (core/ipoint (* i step)       (- (:y size) (:tiles-blue g1)))
+        (core/ipoint (* (inc i) step) (- (:y size) (:tiles-blue g2)))
+        stroke-graph-blue)
+      (canvas/draw-line canvas
+        (core/ipoint (* i step)       (- (:y size) (:tiles-red g1)))
+        (core/ipoint (* (inc i) step) (- (:y size) (:tiles-red g2)))
+        stroke-graph-red))))
+
+(defn paint-scrap [ctx canvas size]
+  (canvas/clear canvas 0xFFFFFFFF)
+  (let [step   (/ (:x size) (inc (:max @*turn)))
+        vscale (/ (:y size)
+                 (reduce max (concat (map :scrap-blue @*games) (map :scrap-red @*games))))]
+    (doseq [[i g1 g2] (zip (range (inc (:max @*turn))) @*games (next @*games))]
+      (canvas/draw-line canvas
+        (core/ipoint (* i step)       (- (:y size) (* vscale (:scrap-blue g1))))
+        (core/ipoint (* (inc i) step) (- (:y size) (* vscale (:scrap-blue g2))))
+        stroke-graph-blue)
+      (canvas/draw-line canvas
+        (core/ipoint (* i step)       (- (:y size) (* vscale (:scrap-red g1))))
+        (core/ipoint (* (inc i) step) (- (:y size) (* vscale (:scrap-red g2))))
+        stroke-graph-red))))
 
 (defn stats [& kvs]
   (ui/grid
@@ -198,12 +222,13 @@
             (ui/column
               (ui/dynamic _ [game (current-game)]
                 (stats
-                  "Tiles blue" (tiles game :blue)
-                  "Tiles red"  (tiles game :red)
+                  "Tiles blue" (:tiles-blue game)
+                  "Tiles red"  (:tiles-red game)
                   "Scrap blue" (:scrap-blue game)
                   "Scrap red"  (:scrap-red game)
                   "Turn"       (:turn game)))
               (ui/gap 0 15)
+              
               (ui/row
                 [:stretch 1
                  (ui/button
@@ -219,19 +244,37 @@
                           (update :value inc))))
                    (ui/label "→"))])
               (ui/gap 0 15)
+              
               (ui/slider *turn)
               (ui/gap 0 15)
+              
+              (ui/label "Tiles:")
+              (ui/gap 0 10)
+              (ui/height 100
+                (ui/canvas {:on-paint paint-tiles}))
+              (ui/gap 0 15)
+              
+              (ui/label "Scrap:")
+              (ui/gap 0 10)
+              (ui/height 100
+                (ui/canvas {:on-paint paint-scrap}))
+              (ui/gap 0 15)
+
               (ui/button
                 #(reset-game)
-                (ui/label "Restart")))))))))
+                (ui/label "New game"))
+              (ui/gap 0 15))))))))
+
+(reset! *app app)
 
 (defn -main [& args]
   (reset-game)
   (ui/start-app!
     (reset! *window
       (ui/window
-        {:title "Coding Games Fall Challenge 2022"}
-        #'app)))
+        {:title "Coding Games Fall Challenge 2022"
+         :mac-icon "resources/icon.icns"}
+        *app)))
   (apply nrepl/-main args))
 
 (comment
