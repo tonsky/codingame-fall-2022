@@ -1,7 +1,9 @@
 (ns codingame.main
   (:require
+    [clojure.string :as str]
     [codingame.core :refer :all]
     [codingame.state :refer :all]
+    [codingame.algo.random :as algo.random]
     [io.github.humbleui.canvas :as canvas]
     [io.github.humbleui.core :as core]
     [io.github.humbleui.paint :as paint]
@@ -10,19 +12,6 @@
     [nrepl.cmdline :as nrepl])
   (:import
     [io.github.humbleui.skija Color FontStyle Paint Typeface]))
-
-; 136 ms scrap ([0 26] [1 2] [4 48] [6 14] [8 76] [9 24] [10 20])
-
-; 8  8  9  4  0  8  4  9  8  10  4  4  4  0  4  9  8  8  8  8  4
-; 0  8  0  8  4  0  8  8  9  10  8  8  8  0  0  6  8  0  8  9  8
-; 0  6  4  8  8  8  10  4  4  9  4  8  10  8  9  4  4  1  10  6  4
-; 4  9  8  9  4  4  8  9  4  10  10  8  8  10  4  0  8  10  6  4  9
-; 8  8  4  8  0  8  6  8  0  0  8  8  8  6  10  4  8  8  6  4  9
-; 9  4  6  8  8  4  10  6  8  8  8  0  0  8  6  8  0  8  4  8  8
-; 9  4  6  10  8  0  4  10  8  8  10  10  4  9  8  4  4  9  8  9  4
-; 4  6  10  1  4  4  9  8  10  8  4  9  4  4  10  8  8  8  4  6  0
-; 8  9  8  0  8  6  0  0  8  8  8  10  9  8  8  0  4  8  0  8  0
-; 4  8  8  8  8  9  4  0  4  4  4  10  8  9  4  8  0  4  9  8  8
 
 (defn sample-game []
   (let [w 21
@@ -45,9 +34,8 @@
         red-pos  (pos 17 3)
         game (as-> game %
                (assoc-tile % blue-pos
-                 :owner     :blue
-                 :scrap     8
-                 :recycler? true)
+                 :owner :blue
+                 :scrap 8)
                (reduce
                  (fn [game pos]
                    (assoc-tile game pos
@@ -67,14 +55,129 @@
                  % (neighbours % red-pos)))]
     game))
 
-(defn proceed [game]
-  (let [{:keys [grid scrap-blue scrap-red]} game
+(defn warn [game player & msg]
+  (apply println "WARN turn" (:turn game) "player" (str player ":") msg))
+
+(defmulti exec
+  (fn [game cmd]
+    (first cmd)))
+
+(defmethod exec :build [game [_ player pos :as cmd]]
+  (let [tile (get-tile game pos)]
+    (cond+
+      (not= player (:owner tile))
+      (do (warn game player "Can't" cmd "at other's tile" tile) game)
+      
+      (<= (:scrap tile) 0)
+      (do (warn game player "Can't" cmd "at grass" tile) game)
+      
+      (:recycler? tile)
+      (do (warn game player "Can't" cmd "at recycler" tile) game)
+      
+      :let [scrap (-> game :scrap player)]
+      (< scrap 10)
+      (do (warn game player "Not enough scrap" scrap "to" cmd) game)
+      
+      :else
+      (-> game
+        (assoc-tile pos
+          :units 0
+          :recycler? true)
+        (update :scrap update player - 10)))))
+
+(defmethod exec :move [game [_ player units from to :as cmd]]
+  (let [from (get-tile game from)
+        to   (get-tile game to)]
+    (cond+
+      (not= player (:owner from))
+      (do (warn game player "Can't" cmd "other's units" from) game)
+      
+      (< (:units from) units)
+      (do (warn game player "Not enough units to" cmd "from" from) game)
+      
+      (:recycler? to)
+      (do (warn game player "Can't" cmd "to recycler" to) game)
+      
+      (= 0 (:scrap to))
+      (do (warn game player "Can't" cmd "to grass" to) game)
+      
+      (= :neutral (:owner to))
+      (-> game
+        (update-tile (:pos from) update :units - units)
+        (update-tile (:pos to) update :units + units)
+        (assoc-tile (:pos to)
+          :owner player))
+      
+      (= player (:owner to))
+      (-> game
+        (update-tile (:pos from) update :units - units)
+        (update-tile (:pos to) update :units + units))
+      
+      :else
+      (-> game
+        (update-tile (:pos from) update :units - units)
+        (update-tile (:pos to) update :units-foe + units)))))
+
+(defmethod exec :spawn [game [_ player units pos :as cmd]]
+  (let [tile (get-tile game pos)]
+    (cond+
+      (not= player (:owner tile))
+      (do (warn game player "Can't" cmd "at other's tile" tile) game)
+      
+      (<= (:scrap tile) 0)
+      (do (warn game player "Can't" cmd "at grass" tile) game)
+      
+      (:recycler? tile)
+      (do (warn game player "Can't" cmd "at recycler" tile) game)
+      
+      :let [scrap (-> game :scrap player)]
+      (< scrap (* 10 units))
+      (do (warn game player "Not enough scrap" scrap "to" cmd) game)
+      
+      :else
+      (-> game
+        (update-tile pos update :units + units)
+        (update :scrap update player - (* 10 units))))))
+
+(defn update-owners [game]
+  (reduce
+    (fn [game tile]
+      (let [{:keys [pos owner units units-foe]} tile]
+        (cond
+          (= 0 units-foe)
+          game
+          
+          (<= units-foe units)
+          (assoc-tile game pos
+            :units (- units units-foe)
+            :units-foe 0)
+          
+          :else
+          (assoc-tile game pos
+            :units (- units-foe units)
+            :units-foe 0
+            :owner (case owner :blue :red :red :blue)))))
+    game
+    (tile-seq game)))
+
+(defn priority-fn [[cmd player & args]]
+  [({:build 0
+     :move  1
+     :spawn 2} cmd)
+   ({:blue 0
+     :red  1} player)])
+
+(defn proceed [game moves]
+  (let [{:keys [grid scrap]} game
+        moves         (sort-by priority-fn moves)
         recycled-blue (filter #(recycled? game % :blue) (pos-seq game))
         recycled-red  (filter #(recycled? game % :red) (pos-seq game))]
     (as-> game %
+      (reduce exec % moves)
+      (update-owners %)
       (update % :turn inc)
-      (update % :scrap-blue + 10 (count recycled-blue))
-      (update % :scrap-red + 10 (count recycled-red))
+      (update % :scrap update :blue + 10 (count recycled-blue))
+      (update % :scrap update :red + 10 (count recycled-red))
       (reduce
         (fn [game pos]
           (let [tile  (get-tile game pos)
@@ -85,20 +188,34 @@
         %
         (set (concat recycled-blue recycled-red)))
       (assoc %
-        :tiles-blue (tiles % :blue)
-        :tiles-red  (tiles % :red)))))
+        :tiles {:blue (tiles % :blue)
+                :red  (tiles % :red)}))))
 
 (defn reset-game []
-  (let [turn0 (sample-game)
-        turns (vec (take 100 (iterate proceed turn0)))]
-    (reset! *games turns)
-    (swap! *turn assoc
-      :value 0
-      :min   0
-      :max   (dec (count turns)))))
+  (let [algo-blue (algo.random/algo :blue)
+        algo-red  (algo.random/algo :red)]
+    (loop [games [(sample-game)]
+           moves []]
+      (if (> (count games) 100)
+        (do
+          (reset! *games games)
+          (reset! *moves moves)
+          (swap! *turn assoc
+            :value 0
+            :min   0
+            :max   (dec (count moves))))
+        (let [game       (peek games)
+              moves-blue (-move algo-blue game)
+              moves-red  (-move algo-red game)
+              moves'     (concat moves-blue moves-red)
+              game'      (proceed game moves')]
+          (recur (conj games game') (conj moves moves')))))))
 
 (defn current-game []
   (nth @*games (:value @*turn)))
+
+(defn current-moves []
+  (nth @*moves (:value @*turn)))
 
 (defn tile-size [game cs]
   (min
@@ -108,8 +225,11 @@
 (def face-ui
   (Typeface/makeFromName "Case Micro" FontStyle/NORMAL))
 
+(def fill-grass
+  (paint/fill 0xFFE8E8E8))
+
 (def fill-scrap-neutral
-  (paint/fill 0xFFB1AA98))
+  (paint/fill 0xFFAAAAAA))
 
 (def fill-scrap-blue
   (paint/fill 0xFF3B68CF))
@@ -126,39 +246,92 @@
 (def icon-recycled
   (ui/svg "resources/recycled.svg"))
 
+(def icon-move-right
+  (ui/svg "resources/move_right.svg"))
+
+(def icon-move-left
+  (ui/svg "resources/move_left.svg"))
+
+(def icon-move-up
+  (ui/svg "resources/move_up.svg"))
+
+(def icon-move-down
+  (ui/svg "resources/move_down.svg"))
+
+(def icon-build
+  (ui/svg "resources/build.svg"))
+
+(def icon-spawn
+  (ui/svg "resources/spawn.svg"))
+
 (def fill-text
   (paint/fill 0xFFFFFFFF))
 
 (defn on-paint [ctx canvas size]
-  (let [{:keys [grid width height turn scrap-blue scrap-red] :as game} (current-game)
-        {:keys [font-ui scale]} ctx
+  (let [{:keys [font-ui scale]} ctx
+        {:keys [grid width height turn] :as game} (current-game)
+        moves (current-moves)
         tile-size (tile-size game size)]
-    (with-open [fill (paint/fill 0xFF000000)]
-      (doseq [tile (tile-seq game)
-              :let [{:keys [pos owner scrap units recycler?]} tile]
-              :when (> scrap 0)
-              :let [left  (* tile-size (:x pos))
-                    top   (* tile-size (:y pos))
-                    rect  (core/irect-xywh left top (- tile-size 2) (- tile-size 2))]]
-        (canvas/draw-rect canvas rect
-          (case owner
-            :neutral fill-scrap-neutral
-            :blue    fill-scrap-blue
-            :red     fill-scrap-red))
+    (doseq [tile (tile-seq game)
+            :let [{:keys [pos owner scrap units recycler?]} tile
+                  left  (* tile-size (:x pos))
+                  top   (* tile-size (:y pos))
+                  rect  (core/irect-xywh left top (- tile-size 2) (- tile-size 2))]]
+      (canvas/draw-rect canvas rect
+        (cond
+          (= 0 scrap)        fill-grass
+          (= :neutral owner) fill-scrap-neutral
+          (= :blue owner)    fill-scrap-blue
+          (= :red owner)     fill-scrap-red))
 
-        (doseq [x (range 0 scrap)]
-          (canvas/draw-rect canvas (core/rect-xywh (+ left 4 (* x 8)) (+ top 4) 6 6) fill-text))
-        ; (canvas/draw-string canvas (str scrap) (+ left (* 1 scale)) (+ top (* 12 scale)) font-ui fill-text)
+      (doseq [x (range 0 scrap)]
+        (canvas/draw-rect canvas (core/rect-xywh (+ left 4 (* x 8)) (+ top 4) 6 6) fill-text)))
+    
+    (doseq [tile (tile-seq game)
+            :let [{:keys [pos owner scrap units recycler?]} tile
+                  left  (* tile-size (:x pos))
+                  top   (* tile-size (:y pos))
+                  rect  (core/irect-xywh left top (- tile-size 2) (- tile-size 2))]]
+      (when (pos? units)
+        (core/draw icon-unit ctx rect canvas)
+        (canvas/draw-string canvas (str units) (+ left (* 2 scale)) (+ top tile-size (- (* 3 scale))) font-ui fill-text))
 
-        (when (pos? units)
-          (core/draw icon-unit ctx rect canvas)
-          (canvas/draw-string canvas (str units) (+ left (* 2 scale)) (+ top tile-size (- (* 3 scale))) font-ui fill-text))
-
-        (when (recycled? game pos)
-          (core/draw icon-recycled ctx rect canvas))
-
-        (when recycler?
-          (core/draw icon-recycler ctx rect canvas))))))
+      (when recycler?
+        (core/draw icon-recycler ctx rect canvas))
+    
+      (when (recycled? game pos)
+        (core/draw icon-recycled ctx rect canvas)))
+    
+    (doseq [[cmd player & rest] moves]
+      (case cmd
+        :move
+        (let [[units from to] rest]
+          (condp = [(- (:x to) (:x from)) (- (:y to) (:y from))]
+            [-1 0]
+            (core/draw icon-move-left ctx (core/irect-xywh (-> (:x from) (- 0.5) (* tile-size)) (-> (:y from) (* tile-size))  tile-size tile-size) canvas)
+            
+            [1 0]
+            (core/draw icon-move-right ctx (core/irect-xywh (-> (:x from) (+ 0.5) (* tile-size)) (-> (:y from) (* tile-size))  tile-size tile-size) canvas)
+            
+            [0 -1]
+            (core/draw icon-move-up ctx (core/irect-xywh (-> (:x from) (* tile-size)) (-> (:y from) (- 0.5) (* tile-size))  tile-size tile-size) canvas)
+            
+            [0 1]
+            (core/draw icon-move-down ctx (core/irect-xywh (-> (:x from) (* tile-size)) (-> (:y from) (+ 0.5) (* tile-size))  tile-size tile-size) canvas)))
+        
+        :build
+        (let [[pos] rest]
+          (core/draw icon-build ctx (core/irect-xywh (* (:x pos) tile-size) (* (:y pos) tile-size) tile-size tile-size) canvas))
+        
+        :spawn
+        (let [[units pos] rest
+              tile (get-tile game pos)]
+          (when (and
+                  (= 0 (:units tile))
+                  (not (:recycler? tile)))
+            (core/draw icon-spawn ctx (core/irect-xywh (* (:x pos) tile-size) (* (:y pos) tile-size) tile-size tile-size) canvas)))
+          
+        nil))))
 
 (def stroke-graph-blue
   (paint/stroke 0x800033CC 4))
@@ -171,99 +344,121 @@
   (let [step (/ (:x size) (inc (:max @*turn)))]
     (doseq [[i g1 g2] (zip (range (inc (:max @*turn))) @*games (next @*games))]
       (canvas/draw-line canvas
-        (core/ipoint (* i step)       (- (:y size) (:tiles-blue g1)))
-        (core/ipoint (* (inc i) step) (- (:y size) (:tiles-blue g2)))
+        (core/ipoint (* i step)       (- (:y size) (-> g1 :tiles :blue)))
+        (core/ipoint (* (inc i) step) (- (:y size) (-> g2 :tiles :blue)))
         stroke-graph-blue)
       (canvas/draw-line canvas
-        (core/ipoint (* i step)       (- (:y size) (:tiles-red g1)))
-        (core/ipoint (* (inc i) step) (- (:y size) (:tiles-red g2)))
+        (core/ipoint (* i step)       (- (:y size) (-> g1 :tiles :red)))
+        (core/ipoint (* (inc i) step) (- (:y size) (-> g2 :tiles :red)))
         stroke-graph-red))))
 
 (defn paint-scrap [ctx canvas size]
   (canvas/clear canvas 0xFFFFFFFF)
   (let [step   (/ (:x size) (inc (:max @*turn)))
         vscale (/ (:y size)
-                 (reduce max (concat (map :scrap-blue @*games) (map :scrap-red @*games))))]
+                 (reduce max 0 (concat (map #(-> % :scrap :blue) @*games) (map #(-> % :scrap :red) @*games))))]
     (doseq [[i g1 g2] (zip (range (inc (:max @*turn))) @*games (next @*games))]
       (canvas/draw-line canvas
-        (core/ipoint (* i step)       (- (:y size) (* vscale (:scrap-blue g1))))
-        (core/ipoint (* (inc i) step) (- (:y size) (* vscale (:scrap-blue g2))))
+        (core/ipoint (* i step)       (- (:y size) (* vscale (-> g1 :scrap :blue))))
+        (core/ipoint (* (inc i) step) (- (:y size) (* vscale (-> g2 :scrap :blue))))
         stroke-graph-blue)
       (canvas/draw-line canvas
-        (core/ipoint (* i step)       (- (:y size) (* vscale (:scrap-red g1))))
-        (core/ipoint (* (inc i) step) (- (:y size) (* vscale (:scrap-red g2))))
+        (core/ipoint (* i step)       (- (:y size) (* vscale (-> g1 :scrap :red))))
+        (core/ipoint (* (inc i) step) (- (:y size) (* vscale (-> g2 :scrap :red))))
         stroke-graph-red))))
 
-(defn stats [& kvs]
-  (ui/grid
-    (for [[k v] (partition 2 kvs)]
-      [(ui/padding 0 0 10 15
-         (ui/label (str k)))
-       (ui/padding 0 0 0 15
-         (ui/max-width
-           [(ui/label {:features ["tnum"]} "1000")]
-           (ui/halign 1
-             (ui/label {:features ["tnum"]} (str v)))))])))
+(defn prev-turn! []
+  (swap! *turn update :value #(if (pos? %) (dec %) %))
+  (redraw)
+  true)
+
+(defn next-turn! []
+  (swap! *turn #(cond-> % (< (:value %) (:max %)) (update :value inc)))
+  (redraw)
+  true)
 
 (def app
   (ui/default-theme {:face-ui face-ui}
     (ui/focus-controller
-      (ui/valign 0.5
+      (ui/event-listener :key
+        (fn [e ctx]
+          (when (:pressed? e)
+            (case (:key e)
+              :left  (prev-turn!)
+              :right (next-turn!)
+              nil)))
         (ui/row
           [:stretch 1
-           (ui/padding 10 0 20 0
-             (ui/with-bounds ::bounds
-               (ui/dynamic ctx [game      (current-game)
-                                tile-size (tile-size game (::bounds ctx))]
-                 (ui/width (* tile-size (:width game))
-                   (ui/height (* tile-size (:height game))
-                     (ui/canvas {:on-paint on-paint}))))))]
-          (ui/padding 0 0 20 0
-            (ui/column
-              (ui/dynamic _ [game (current-game)]
-                (stats
-                  "Tiles blue" (:tiles-blue game)
-                  "Tiles red"  (:tiles-red game)
-                  "Scrap blue" (:scrap-blue game)
-                  "Scrap red"  (:scrap-red game)
-                  "Turn"       (:turn game)))
-              (ui/gap 0 15)
-              
-              (ui/row
+           (ui/center
+             (ui/padding 20 0 10 0
+               (ui/with-bounds ::bounds
+                 (ui/dynamic ctx [game      (current-game)
+                                  tile-size (tile-size game (::bounds ctx))]
+                   (ui/width (* tile-size (:width game))
+                     (ui/height (* tile-size (:height game))
+                       (ui/canvas {:on-paint on-paint})))))))]
+          (ui/width 300
+            (ui/padding 10 20 20 20
+              (ui/column
                 [:stretch 1
-                 (ui/button
-                   (fn [] (swap! *turn update :value #(if (pos? %) (dec %) %)))
-                   (ui/label "←"))]
-                (ui/gap 15 0)
-                [:stretch 1
-                 (ui/button
-                   (fn []
-                     (swap! *turn
-                       #(cond-> %
-                          (< (:value %) (:max %))
-                          (update :value inc))))
-                   (ui/label "→"))])
-              (ui/gap 0 15)
+                 (ui/vscrollbar
+            
+                   (ui/column
+                     (ui/with-context
+                       {:hui.button/padding-left 10
+                        :hui.button/padding-top 7
+                        :hui.button/padding-right 10
+                        :hui.button/padding-bottom 7}
+                       (ui/row
+                         (ui/valign 0.5
+                           (ui/dynamic _ [turn (:turn (current-game))]
+                             (ui/label (str "Turn: " turn))))
+                         [:stretch 1 nil]
+                         (ui/valign 0.5
+                           (ui/button prev-turn! (ui/label "←")))
+                         (ui/gap 5 0)
+                         (ui/valign 0.5
+                           (ui/button next-turn! (ui/label "→")))))
+                     (ui/gap 0 10)
+                
+                     (ui/slider *turn)
+                     (ui/gap 0 15)
               
-              (ui/slider *turn)
-              (ui/gap 0 15)
-              
-              (ui/label "Tiles:")
-              (ui/gap 0 10)
-              (ui/height 100
-                (ui/canvas {:on-paint paint-tiles}))
-              (ui/gap 0 15)
-              
-              (ui/label "Scrap:")
-              (ui/gap 0 10)
-              (ui/height 100
-                (ui/canvas {:on-paint paint-scrap}))
-              (ui/gap 0 15)
+                     (ui/label "Scrap:")
+                     (ui/gap 0 10)
+                     (ui/height 50
+                       (ui/canvas {:on-paint paint-scrap}))
+                     (ui/gap 0 15)
+                     
+                     (ui/label "Tiles:")
+                     (ui/gap 0 10)
+                     (ui/height 50
+                       (ui/canvas {:on-paint paint-tiles}))
+                     (ui/gap 0 15)
 
-              (ui/button
-                #(reset-game)
-                (ui/label "New game"))
-              (ui/gap 0 15))))))))
+                     (ui/label "Blue:")
+                     (ui/gap 0 10)
+                     (ui/dynamic _ [moves (->> (current-moves)
+                                            (filter #(= :blue (second %)))
+                                            (sort-by priority-fn))]
+                       (ui/column
+                         (for [[cmd _ & args] moves]
+                           (ui/padding 10 0 0 10
+                             (ui/label (str cmd " " (str/join " " args)))))))
+                     (ui/gap 0 15)
+              
+                     (ui/label "Red:")
+                     (ui/gap 0 10)
+                     (ui/dynamic _ [moves (->> (current-moves)
+                                            (filter #(= :red (second %)))
+                                            (sort-by priority-fn))]
+                       (ui/column
+                         (for [[cmd _ & args] moves]
+                           (ui/padding 10 0 0 10
+                             (ui/label (str cmd " " (str/join " " args)))))))
+                     (ui/gap 0 15)))]
+                (ui/button #(reset-game) (ui/label "New game"))
+                ))))))))
 
 (reset! *app app)
 

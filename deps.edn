@@ -3,7 +3,7 @@
   nrepl/nrepl                              {:mvn/version "1.0.0"}
   com.clojure-goes-fast/clj-async-profiler {:mvn/version "1.0.3"}
   org.clojure/tools.namespace              {:mvn/version "1.3.0"}
-  io.github.humbleui/humbleui              {:git/sha "0e93d9a6172caff3bf58eb00f5fbef4e30a977cb"
+  io.github.humbleui/humbleui              {:git/sha "69faab0123f61c242e34061e8bcaaf772b46d0e1"
                                             #_#_:local/root "/Users/tonsky/ws/humbleui"}}
  :aliases
  {:profile

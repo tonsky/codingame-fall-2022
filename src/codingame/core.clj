@@ -24,6 +24,14 @@
      (debug ~msg dt# "ms")
      res#))
 
+(defmacro cond+ [& clauses]
+  (when-some [[test expr & rest] clauses]
+    (condp = test
+      :do   `(do ~expr (cond+ ~@rest))
+      :let  `(let ~expr (cond+ ~@rest))
+      :some `(or ~expr (cond+ ~@rest))
+      `(if ~test ~expr (cond+ ~@rest)))))
+
 (defn zip [& xs]
   (apply map vector xs))
 
@@ -53,14 +61,14 @@
     (long (abs (- (:y a) (:y b))))))
 
 (defn grass [pos]
-  (->Tile pos :neutral 0 0 false))
+  (->Tile pos :neutral 0 0 0 false))
 
 (defn make-game [w h]
   (->Game
     (forv [y (range h)]
       (forv [x (range w)]
-        (->Tile (pos x y) :neutral 0 0 false)))
-    w h 0 10 10 5 5))
+        (->Tile (pos x y) :neutral 0 0 0 false)))
+    w h 0 {:blue 10 :red 10} {:blue 5 :red 5}))
 
 (defn get-tile [game pos]
   (-> game

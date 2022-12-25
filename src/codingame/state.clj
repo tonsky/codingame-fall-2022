@@ -19,6 +19,9 @@
 (def *games
   (atom nil))
 
+(def *moves
+  (atom nil))
+
 (def *turn
   (atom nil))
 
@@ -59,6 +62,13 @@
   (.write ^Writer *out* (str (:y c)))
   (.write ^Writer *out* ")"))
 
-(defrecord Tile [pos owner scrap units recycler?])
+(defrecord Tile [pos owner scrap units units-foe recycler?])
 
-(defrecord Game [grid width height turn scrap-blue scrap-red tiles-blue tiles-red])
+(defrecord Game [grid width height turn scrap tiles])
+
+(defprotocol Algo
+  (-move [_ game]))
+
+; [:move  <player> <units> <from> <to>]
+; [:build <player> <pos>]
+; [:spawn <player> <units> <pos>]
