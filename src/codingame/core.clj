@@ -63,6 +63,11 @@
 (defn grass [pos]
   (->Tile pos :neutral 0 0 0 false))
 
+(defn opponent [player]
+  (case player
+    :blue :red
+    :red :blue))
+
 (defn make-game [w h]
   (->Game
     (forv [y (range h)]

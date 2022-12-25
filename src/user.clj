@@ -7,7 +7,7 @@
 
 (defn reload []
   (set! *warn-on-reflection* true)
-  (let [res (ns/refresh)]
+  (let [res (ns/refresh :after 'codingame.main/reset-game)]
     (if (instance? Throwable res)
       (throw res)
       res)))

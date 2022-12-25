@@ -1,9 +1,11 @@
 (ns codingame.main
   (:require
+    [clojure.data.priority-map :as priority-map]
     [clojure.string :as str]
     [codingame.core :refer :all]
     [codingame.state :refer :all]
     [codingame.algo.random :as algo.random]
+    [codingame.algo.mark1 :as algo.mark1]
     [io.github.humbleui.canvas :as canvas]
     [io.github.humbleui.core :as core]
     [io.github.humbleui.paint :as paint]
@@ -55,8 +57,8 @@
                  % (neighbours % red-pos)))]
     game))
 
-(defn warn [game player & msg]
-  (apply println "WARN turn" (:turn game) "player" (str player ":") msg))
+(defn warn [game & msg]
+  #_(apply println "WARN turn" (:turn game) msg))
 
 (defmulti exec
   (fn [game cmd]
@@ -66,17 +68,17 @@
   (let [tile (get-tile game pos)]
     (cond+
       (not= player (:owner tile))
-      (do (warn game player "Can't" cmd "at other's tile" tile) game)
+      (do (warn game "Can't" cmd "at other's tile" tile) game)
       
       (<= (:scrap tile) 0)
-      (do (warn game player "Can't" cmd "at grass" tile) game)
+      (do (warn game "Can't" cmd "at grass" tile) game)
       
       (:recycler? tile)
-      (do (warn game player "Can't" cmd "at recycler" tile) game)
+      (do (warn game "Can't" cmd "at recycler" tile) game)
       
       :let [scrap (-> game :scrap player)]
       (< scrap 10)
-      (do (warn game player "Not enough scrap" scrap "to" cmd) game)
+      (do (warn game "Not enough scrap" scrap "to" cmd) game)
       
       :else
       (-> game
@@ -85,54 +87,91 @@
           :recycler? true)
         (update :scrap update player - 10)))))
 
-(defmethod exec :move [game [_ player units from to :as cmd]]
-  (let [from (get-tile game from)
-        to   (get-tile game to)]
+(defn find-path [game from to]
+  (loop [dists {from 0}
+         prevs {}
+         queue (priority-map/priority-map
+                 from (dist from to))]
     (cond+
-      (not= player (:owner from))
-      (do (warn game player "Can't" cmd "other's units" from) game)
+      (empty? queue)
+      nil
       
-      (< (:units from) units)
-      (do (warn game player "Not enough units to" cmd "from" from) game)
+      :let [[pos _] (peek queue)]
       
-      (:recycler? to)
-      (do (warn game player "Can't" cmd "to recycler" to) game)
+      (= pos to)
+      (->> (iterate prevs to)
+        (take-while some?)
+        (reverse)
+        (second))
       
-      (= 0 (:scrap to))
-      (do (warn game player "Can't" cmd "to grass" to) game)
-      
-      (= :neutral (:owner to))
-      (-> game
-        (update-tile (:pos from) update :units - units)
-        (update-tile (:pos to) update :units + units)
-        (assoc-tile (:pos to)
-          :owner player))
-      
-      (= player (:owner to))
-      (-> game
-        (update-tile (:pos from) update :units - units)
-        (update-tile (:pos to) update :units + units))
-      
+      :let [dist' (inc (dists pos))
+            [dists' prevs' queue']
+            (reduce
+              (fn [[dists prevs queue] n]
+                (let [tile (get-tile game n)]
+                  (if (or
+                        (= 0 (:scrap tile))
+                        (:recycler? tile)
+                        (<= (dists n Long/MAX_VALUE) dist'))
+                    [dists prevs queue]
+                    [(assoc dists n dist')
+                     (assoc prevs n pos)
+                     (assoc queue n (+ dist' (dist n to)))])))
+              [dists prevs (pop queue)]
+              (neighbours game pos))]
       :else
-      (-> game
-        (update-tile (:pos from) update :units - units)
-        (update-tile (:pos to) update :units-foe + units)))))
+      (recur dists' prevs' queue'))))
+
+(defmethod exec :move [game [_ player units pos-from pos-to :as cmd]]
+  (let [from (get-tile game pos-from)]
+    (if-some [pos-to' (find-path game pos-from pos-to)]
+      (let [to (get-tile game pos-to')]
+        (cond+
+          (not= player (:owner from))
+          (do (warn game "Can't" cmd "other's units" from) game)
+      
+          (< (:units from) units)
+          (do (warn game "Not enough units to" cmd "from" from) game)
+      
+          (:recycler? to)
+          (do (warn game "Can't" cmd "to recycler" to) game)
+      
+          (= 0 (:scrap to))
+          (do (warn game "Can't" cmd "to grass" to) game)
+      
+          (= :neutral (:owner to))
+          (-> game
+            (update-tile (:pos from) update :units - units)
+            (update-tile (:pos to) update :units + units)
+            (assoc-tile (:pos to)
+              :owner player))
+      
+          (= player (:owner to))
+          (-> game
+            (update-tile (:pos from) update :units - units)
+            (update-tile (:pos to) update :units + units))
+      
+          :else
+          (-> game
+            (update-tile (:pos from) update :units - units)
+            (update-tile (:pos to) update :units-foe + units))))
+      (do (warn game "Not reachable" cmd) game))))
 
 (defmethod exec :spawn [game [_ player units pos :as cmd]]
   (let [tile (get-tile game pos)]
     (cond+
       (not= player (:owner tile))
-      (do (warn game player "Can't" cmd "at other's tile" tile) game)
+      (do (warn game "Can't" cmd "at other's tile" tile) game)
       
       (<= (:scrap tile) 0)
-      (do (warn game player "Can't" cmd "at grass" tile) game)
+      (do (warn game "Can't" cmd "at grass" tile) game)
       
       (:recycler? tile)
-      (do (warn game player "Can't" cmd "at recycler" tile) game)
+      (do (warn game "Can't" cmd "at recycler" tile) game)
       
       :let [scrap (-> game :scrap player)]
       (< scrap (* 10 units))
-      (do (warn game player "Not enough scrap" scrap "to" cmd) game)
+      (do (warn game "Not enough scrap" scrap "to" cmd) game)
       
       :else
       (-> game
@@ -156,7 +195,7 @@
           (assoc-tile game pos
             :units (- units-foe units)
             :units-foe 0
-            :owner (case owner :blue :red :red :blue)))))
+            :owner (opponent owner)))))
     game
     (tile-seq game)))
 
@@ -192,8 +231,8 @@
                 :red  (tiles % :red)}))))
 
 (defn reset-game []
-  (let [algo-blue (algo.random/algo :blue)
-        algo-red  (algo.random/algo :red)]
+  (let [algo-blue (algo.mark1/algo :blue)
+        algo-red  (algo.mark1/algo :red)]
     (loop [games [(sample-game)]
            moves []]
       (if (> (count games) 100)
@@ -209,7 +248,8 @@
               moves-red  (-move algo-red game)
               moves'     (concat moves-blue moves-red)
               game'      (proceed game moves')]
-          (recur (conj games game') (conj moves moves')))))))
+          (recur (conj games game') (conj moves moves'))))))
+  (redraw))
 
 (defn current-game []
   (nth @*games (:value @*turn)))
@@ -246,18 +286,6 @@
 (def icon-recycled
   (ui/svg "resources/recycled.svg"))
 
-(def icon-move-right
-  (ui/svg "resources/move_right.svg"))
-
-(def icon-move-left
-  (ui/svg "resources/move_left.svg"))
-
-(def icon-move-up
-  (ui/svg "resources/move_up.svg"))
-
-(def icon-move-down
-  (ui/svg "resources/move_down.svg"))
-
 (def icon-build
   (ui/svg "resources/build.svg"))
 
@@ -266,6 +294,9 @@
 
 (def fill-text
   (paint/fill 0xFFFFFFFF))
+
+(def stroke-move
+  (paint/stroke 0x80FFFFFF 6))
 
 (defn on-paint [ctx canvas size]
   (let [{:keys [font-ui scale]} ctx
@@ -306,18 +337,14 @@
       (case cmd
         :move
         (let [[units from to] rest]
-          (condp = [(- (:x to) (:x from)) (- (:y to) (:y from))]
-            [-1 0]
-            (core/draw icon-move-left ctx (core/irect-xywh (-> (:x from) (- 0.5) (* tile-size)) (-> (:y from) (* tile-size))  tile-size tile-size) canvas)
-            
-            [1 0]
-            (core/draw icon-move-right ctx (core/irect-xywh (-> (:x from) (+ 0.5) (* tile-size)) (-> (:y from) (* tile-size))  tile-size tile-size) canvas)
-            
-            [0 -1]
-            (core/draw icon-move-up ctx (core/irect-xywh (-> (:x from) (* tile-size)) (-> (:y from) (- 0.5) (* tile-size))  tile-size tile-size) canvas)
-            
-            [0 1]
-            (core/draw icon-move-down ctx (core/irect-xywh (-> (:x from) (* tile-size)) (-> (:y from) (+ 0.5) (* tile-size))  tile-size tile-size) canvas)))
+          (canvas/draw-line canvas
+            (core/point
+              (-> (:x from) (+ 0.5) (* tile-size))
+              (-> (:y from) (+ 0.5) (* tile-size)))
+            (core/point
+              (-> (:x to) (+ 0.5) (* tile-size))
+              (-> (:y to) (+ 0.5) (* tile-size)))
+            stroke-move))
         
         :build
         (let [[pos] rest]
@@ -383,10 +410,10 @@
       (ui/event-listener :key
         (fn [e ctx]
           (when (:pressed? e)
-            (case (:key e)
-              :left  (prev-turn!)
-              :right (next-turn!)
-              nil)))
+            (cond
+              (= :left (:key e))  (prev-turn!)
+              (= :right (:key e)) (next-turn!)
+              (and (= :r (:key e)) (:mac-command (:modifiers e))) (reset-game))))
         (ui/row
           [:stretch 1
            (ui/center
