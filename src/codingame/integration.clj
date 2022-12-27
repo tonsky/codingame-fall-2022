@@ -9,26 +9,33 @@
     (-move [_ game]
       [])))
 
+;; integration
+
 (defn read-longs []
   (-> (read-line)
     (str/split #" ")
     (->> (remove str/blank?)
       (mapv parse-long))))
 
-(defn read-game [width height]
+(defn read-game [width height turn]
   (let [[scrap-me scrap-foe] (read-longs)
         *game (volatile! (make-game width height))]
     (reset-t!)
     (dotimes [y height]
       (dotimes [x width]
         (let [pos (pos x y)
-              [scrap owner units recycler can-build can-spawn in-range-of-recycler] (read-longs)]
+              [scrap owner units recycler _ _ _] (read-longs)]
           (vswap! *game assoc-tile pos
             :scrap     scrap
-            :owner     (case owner 1 :blue 0 :red -1 :neutral)
+            :owner     ({1 :blue, 0 :red, -1 :neutral} owner)
             :units     units
             :recycler? (= recycler 1)))))
-    @*game))
+    (vswap! *game
+      #(-> %
+         (assoc
+           :turn turn
+           :scrap {:blue scrap-me, :red scrap-foe})
+         (recalc-game)))))
 
 (defmulti serialize first)
 
@@ -41,12 +48,14 @@
 (defmethod serialize :spawn [[_ _ units [x y]]]
   (format "SPAWN %d %d %d" units x y))
 
-(defn -main [& args]
+(defn -main [& _]
   (let [[width height] (read-longs)
-        algo  (algo :blue)]
+        algo  (algo :blue)
+        *turn (volatile! 0)]
     (while true
-      (let [game     (read-game width height)
+      (let [game     (read-game width height @*turn)
             commands (-move algo game)]
+        (vswap! *turn inc)
         (if (empty? commands)
           (println "WAIT")
           (->> commands

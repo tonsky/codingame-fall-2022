@@ -25,6 +25,8 @@
 (def *turn
   (atom nil))
 
+;; state
+
 (defrecord Pos [^long x ^long y]
   java.lang.Object
   (toString [_]
@@ -62,7 +64,7 @@
   (.write ^Writer *out* (str (:y c)))
   (.write ^Writer *out* ")"))
 
-(defrecord Tile [pos owner ^long scrap ^long units ^long units-foe ^boolean recycler?])
+(defrecord Tile [pos owner ^long scrap ^long units ^long units-foe ^boolean recycler? ^boolean dead?])
 
 (defrecord Game [grid ^long width ^long height ^long turn scrap tiles])
 

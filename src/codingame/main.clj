@@ -7,6 +7,8 @@
     [codingame.algo.random :as algo.random]
     [codingame.algo.mark1 :as algo.mark1]
     [codingame.algo.mark2 :as algo.mark2]
+    [codingame.algo.mark3 :as algo.mark3]
+    [io.github.humbleui.app :as app]
     [io.github.humbleui.canvas :as canvas]
     [io.github.humbleui.core :as core]
     [io.github.humbleui.paint :as paint]
@@ -55,7 +57,8 @@
                      :owner :red
                      :scrap 8
                      :units 1))
-                 % (neighbours % red-pos)))]
+                 % (neighbours % red-pos))
+               (recalc-game %))]
     game))
 
 (defn warn [game & msg]
@@ -228,12 +231,10 @@
             (set-tile game pos tile')))
         %
         (set (concat recycled-blue recycled-red)))
-      (assoc %
-        :tiles {:blue (tiles % :blue)
-                :red  (tiles % :red)}))))
+      (recalc-game %))))
 
 (defn reset-game []
-  (let [algo-blue (algo.mark1/algo :blue)
+  (let [algo-blue (algo.mark3/algo :blue)
         algo-red  (algo.mark2/algo :red)]
     (loop [games [(sample-game)]
            moves []]
@@ -514,11 +515,19 @@
 (defn -main [& args]
   (reset-game)
   (ui/start-app!
-    (reset! *window
-      (ui/window
-        {:title "Coding Games Fall Challenge 2022"
-         :mac-icon "resources/icon.icns"}
-        *app)))
+    (let [{screen :id
+           bounds :bounds
+           area   :work-area} (last (app/screens))]
+      (reset! *window
+        (ui/window
+          {:title    "Coding Games Fall Challenge 2022"
+           :mac-icon "resources/icon.icns"
+           :screen   screen
+           :x        (- (:x area) (:x bounds))
+           :y        (- (:y area) (:y bounds))
+           :width    (:width area)
+           :height   (:height area)}
+          *app))))
   (apply nrepl/-main args))
 
 (comment

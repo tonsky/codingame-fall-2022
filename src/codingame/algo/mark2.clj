@@ -3,53 +3,6 @@
     [codingame.core :refer :all]
     [codingame.state :refer :all]))
 
-(defn flood [game pos]
-  (loop [reachable #{pos}
-         queue     (conj clojure.lang.PersistentQueue/EMPTY
-                     pos)]
-    (if (empty? queue)
-      reachable
-      (let [pos (peek queue)
-            ns  (->> (neighbours game pos)
-                  (filter #(movable? (get-tile game %)))
-                  (remove reachable))]
-        (recur
-          (into reachable ns)
-          (into (pop queue) ns))))))
-
-(defn cluster-units [game player cluster] 
-  (->> cluster
-    (map #(get-tile game %))
-    (filter #(= player (:owner %)))
-    (filter #(pos? (:units %)))
-    (map :units)
-    (reduce + 0)))
-
-(defn cluster-tiles [game player cluster] 
-  (->> cluster
-    (map #(get-tile game %))
-    (filter #(= player (:owner %)))
-    (count)))
-
-(defn cluster-info [game cluster]
-  {:positions cluster
-   :units     {:blue (cluster-units game :blue cluster)
-               :red  (cluster-units game :red cluster)}
-   :tiles     {:blue (cluster-tiles game :blue cluster)
-               :red  (cluster-tiles game :red cluster)}})
-
-(defn clusters [game]
-  (loop [clusters  #{}
-         positions (->> (pos-seq game)
-                     (filter #(movable? (get-tile game %)))
-                     set)]
-    (if (empty? positions)
-      clusters
-      (let [cluster (flood game (first positions))]
-        (recur
-          (conj clusters (cluster-info game cluster))
-          (reduce disj positions cluster))))))
-
 (defn build [{:keys [player foe game units clusters] :as plan}]
   (let [priority-tile (fn [pos]
                         (let [{:keys [scrap]} (get-tile game pos)]

@@ -2,6 +2,8 @@
   (:require
     [codingame.state :refer :all]))
 
+;; core
+
 (defn now []
   (System/currentTimeMillis))
 
@@ -14,6 +16,11 @@
 (defn debug [& msg]
   (binding [*out* *err*]
     (apply println (- (now) t0) "ms" msg)))
+
+(defmacro spy [obj]
+  `(let [res# ~obj]
+     (debug "spy:" res#)
+     res#))
 
 (defmacro measure [msg & body]
   `(let [t#   (now)
@@ -50,7 +57,7 @@
            i     0
            units units]
       (cond
-        (= 0 units) (vec res)
+        (= 0 units) (take-while pos? res)
         (>= i (count res)) (recur res 0 units)
         :else (recur
                 (update res i inc)
@@ -62,7 +69,14 @@
     (long (abs (- (:y a) (:y b))))))
 
 (defn grass [pos]
-  (->Tile pos :neutral 0 0 0 false))
+  (map->Tile
+    {:pos       pos
+     :owner     :neutral 
+     :scrap     0
+     :units     0
+     :units-foe 0
+     :recycler? false
+     :dead?     false}))
 
 (defn opponent [player]
   (case player
@@ -75,11 +89,14 @@
     (not (:recycler? tile))))
 
 (defn make-game [w h]
-  (->Game
-    (forv [y (range h)]
-      (forv [x (range w)]
-        (->Tile (pos x y) :neutral 0 0 0 false)))
-    w h 0 {:blue 10 :red 10} {:blue 5 :red 5}))
+  (map->Game
+    {:grid   (forv [y (range h)]
+               (forv [x (range w)]
+                 (grass (pos x y))))
+     :width  w
+     :height h
+     :turn   0
+     :scrap  {:blue 10 :red 10}}))
 
 (defn get-tile [game pos]
   (-> game
@@ -97,8 +114,9 @@
   (apply update game :grid update (:y pos) update (:x pos) f args))
 
 (defn tile-seq [game]
-  (for [row  (:grid game)
-        tile row]
+  (for [row   (:grid game)
+        tile  row
+        :when (pos? (:scrap tile))]
     tile))
 
 (defn pos-seq [game]
@@ -143,3 +161,79 @@
 
 (defn tiles [game owner]
   (count (filter #(= (:owner %) owner) (tile-seq game))))
+
+(defn recalc-game [game]
+  (let [dead (->> (tile-seq game)
+               (filter #(and (= 1 (:scrap %))
+                          (recycled? game (:pos %)))))]
+    (as-> game %
+      (reduce
+        #(assoc-tile %1 (:pos %2) :dead? true)
+        % dead)
+      (assoc %
+        :tiles {:blue (tiles % :blue)
+                :red  (tiles % :red)}))))
+
+(defn flood [game pos]
+  (loop [reachable #{pos}
+         queue     (conj clojure.lang.PersistentQueue/EMPTY
+                     pos)]
+    (if (empty? queue)
+      reachable
+      (let [pos (peek queue)
+            ns  (->> (neighbours game pos)
+                  (filter #(movable? (get-tile game %)))
+                  (remove reachable))]
+        (recur
+          (into reachable ns)
+          (into (pop queue) ns))))))
+
+(defn cluster-units [game player cluster] 
+  (->> cluster
+    (map #(get-tile game %))
+    (filter #(= player (:owner %)))
+    (filter #(pos? (:units %)))
+    (map :units)
+    (reduce + 0)))
+
+(defn cluster-tiles [game player cluster] 
+  (->> cluster
+    (map #(get-tile game %))
+    (filter #(= player (:owner %)))
+    (count)))
+
+(defn cluster-info [game cluster]
+  {:positions cluster
+   :units     {:blue    (cluster-units game :blue cluster)
+               :red     (cluster-units game :red cluster)}
+   :tiles     {:blue    (cluster-tiles game :blue cluster)
+               :red     (cluster-tiles game :red cluster)
+               :neutral (cluster-tiles game :neutral cluster)}})
+
+(defn clusters [game]
+  (loop [clusters  #{}
+         positions (->> (pos-seq game)
+                     (filter #(movable? (get-tile game %)))
+                     set)]
+    (if (empty? positions)
+      clusters
+      (let [cluster (flood game (first positions))]
+        (recur
+          (conj clusters (cluster-info game cluster))
+          (reduce disj positions cluster))))))
+
+(defn cluster-border [game player cluster]
+  (->> (:positions cluster)
+    (filter
+      (fn [pos]
+        (let [tile (get-tile game pos)]
+          (and
+            (= player (:owner tile))
+            (not (:dead? tile))
+            (some
+              (fn [nb]
+                (let [tile (get-tile game nb)]
+                  (and
+                    (pos? (:scrap tile))
+                    (not= player (:owner tile)))))
+              (neighbours game pos))))))))
