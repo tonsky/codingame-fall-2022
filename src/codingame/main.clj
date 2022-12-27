@@ -8,6 +8,7 @@
     [codingame.algo.mark1 :as algo.mark1]
     [codingame.algo.mark2 :as algo.mark2]
     [codingame.algo.mark3 :as algo.mark3]
+    [codingame.algo.mark4 :as algo.mark4]
     [io.github.humbleui.app :as app]
     [io.github.humbleui.canvas :as canvas]
     [io.github.humbleui.core :as core]
@@ -234,8 +235,8 @@
       (recalc-game %))))
 
 (defn reset-game []
-  (let [algo-blue (algo.mark3/algo :blue)
-        algo-red  (algo.mark2/algo :red)]
+  (let [algo-blue (algo.mark4/algo :blue)
+        algo-red  (algo.mark3/algo :red)]
     (loop [games [(sample-game)]
            moves []]
       (if (> (count games) 100)
