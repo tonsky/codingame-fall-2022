@@ -68,6 +68,7 @@
                         (filter #(and
                                    (= player (:owner %))
                                    (pos? (:scrap %))
+                                   (zero? (:units %))
                                    (not (:recycler? %))))
                         (remove (fn [tile] (some #(contains? % (:pos tile)) my-clusters)))
                         (sort-by #(- (priority-pos %))))]
