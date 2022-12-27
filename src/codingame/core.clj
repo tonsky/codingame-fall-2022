@@ -2,8 +2,6 @@
   (:require
     [codingame.state :refer :all]))
 
-(declare width height)
-
 (defn now []
   (System/currentTimeMillis))
 
@@ -42,6 +40,9 @@
   `(vec
      (for ~@body)))
 
+(defn search [pred xs]
+  (some #(when (pred %) %) xs))
+
 (defn distribute [slots units]
   (if (= 0 slots)
     []
@@ -67,6 +68,11 @@
   (case player
     :blue :red
     :red :blue))
+
+(defn movable? [tile]
+  (and
+    (pos? (:scrap tile))
+    (not (:recycler? tile))))
 
 (defn make-game [w h]
   (->Game

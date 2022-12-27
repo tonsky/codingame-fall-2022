@@ -6,6 +6,7 @@
     [codingame.state :refer :all]
     [codingame.algo.random :as algo.random]
     [codingame.algo.mark1 :as algo.mark1]
+    [codingame.algo.mark2 :as algo.mark2]
     [io.github.humbleui.canvas :as canvas]
     [io.github.humbleui.core :as core]
     [io.github.humbleui.paint :as paint]
@@ -83,7 +84,8 @@
       :else
       (-> game
         (assoc-tile pos
-          :units 0
+          :units     0
+          :units-foe 0
           :recycler? true)
         (update :scrap update player - 10)))))
 
@@ -200,8 +202,8 @@
     (tile-seq game)))
 
 (defn priority-fn [[cmd player & args]]
-  [({:build 0
-     :move  1
+  [({:move  0
+     :build 1
      :spawn 2} cmd)
    ({:blue 0
      :red  1} player)])
@@ -232,7 +234,7 @@
 
 (defn reset-game []
   (let [algo-blue (algo.mark1/algo :blue)
-        algo-red  (algo.mark1/algo :red)]
+        algo-red  (algo.mark2/algo :red)]
     (loop [games [(sample-game)]
            moves []]
       (if (> (count games) 100)
@@ -368,22 +370,30 @@
 
 (defn paint-tiles [ctx canvas size]
   (canvas/clear canvas 0xFFFFFFFF)
-  (let [step (/ (:x size) (inc (:max @*turn)))]
+  (let [step (/ (:x size) (inc (:max @*turn)))
+        vscale (/ (:y size)
+                 (reduce max 0
+                   (concat
+                     (map #(-> % :tiles :blue) @*games)
+                     (map #(-> % :tiles :red) @*games))))]
     (doseq [[i g1 g2] (zip (range (inc (:max @*turn))) @*games (next @*games))]
       (canvas/draw-line canvas
-        (core/ipoint (* i step)       (- (:y size) (-> g1 :tiles :blue)))
-        (core/ipoint (* (inc i) step) (- (:y size) (-> g2 :tiles :blue)))
+        (core/ipoint (* i step)       (- (:y size) (* vscale (-> g1 :tiles :blue))))
+        (core/ipoint (* (inc i) step) (- (:y size) (* vscale (-> g2 :tiles :blue))))
         stroke-graph-blue)
       (canvas/draw-line canvas
-        (core/ipoint (* i step)       (- (:y size) (-> g1 :tiles :red)))
-        (core/ipoint (* (inc i) step) (- (:y size) (-> g2 :tiles :red)))
+        (core/ipoint (* i step)       (- (:y size) (* vscale (-> g1 :tiles :red))))
+        (core/ipoint (* (inc i) step) (- (:y size) (* vscale (-> g2 :tiles :red))))
         stroke-graph-red))))
 
 (defn paint-scrap [ctx canvas size]
   (canvas/clear canvas 0xFFFFFFFF)
   (let [step   (/ (:x size) (inc (:max @*turn)))
         vscale (/ (:y size)
-                 (reduce max 0 (concat (map #(-> % :scrap :blue) @*games) (map #(-> % :scrap :red) @*games))))]
+                 (reduce max 0
+                   (concat 
+                     (map #(-> % :scrap :blue) @*games) 
+                     (map #(-> % :scrap :red) @*games))))]
     (doseq [[i g1 g2] (zip (range (inc (:max @*turn))) @*games (next @*games))]
       (canvas/draw-line canvas
         (core/ipoint (* i step)       (- (:y size) (* vscale (-> g1 :scrap :blue))))
@@ -465,6 +475,12 @@
 
                      (ui/label "Blue:")
                      (ui/gap 0 10)
+                     (ui/dynamic _ [scrap (-> (current-game) :scrap :blue)]
+                       (ui/padding 10 0 0 10
+                         (ui/label (str "scrap = " scrap))))
+                     (ui/dynamic _ [tiles (-> (current-game) :tiles :blue)]
+                       (ui/padding 10 0 0 10
+                         (ui/label (str "tiles = " tiles))))
                      (ui/dynamic _ [moves (->> (current-moves)
                                             (filter #(= :blue (second %)))
                                             (sort-by priority-fn))]
@@ -476,6 +492,12 @@
               
                      (ui/label "Red:")
                      (ui/gap 0 10)
+                     (ui/dynamic _ [scrap (-> (current-game) :scrap :red)]
+                       (ui/padding 10 0 0 10
+                         (ui/label (str "scrap = " scrap))))
+                     (ui/dynamic _ [tiles (-> (current-game) :tiles :red)]
+                       (ui/padding 10 0 0 10
+                         (ui/label (str "tiles = " tiles))))
                      (ui/dynamic _ [moves (->> (current-moves)
                                             (filter #(= :red (second %)))
                                             (sort-by priority-fn))]
