@@ -9,6 +9,7 @@
     [codingame.algo.mark2 :as algo.mark2]
     [codingame.algo.mark3 :as algo.mark3]
     [codingame.algo.mark4 :as algo.mark4]
+    [codingame.algo.mark5 :as algo.mark5]
     [io.github.humbleui.app :as app]
     [io.github.humbleui.canvas :as canvas]
     [io.github.humbleui.core :as core]
@@ -20,8 +21,8 @@
     [io.github.humbleui.skija Color FontStyle Paint Typeface]))
 
 (defn sample-game []
-  (let [w 21
-        h 10
+  (let [w     (+ 12 (rand-int 10))
+        h     (quot w 2)
         game  (make-game w h)
         scrap (->> (concat
                      (repeat 28 0)
@@ -32,12 +33,14 @@
                      (repeat 20 10))
                 shuffle)
         game (reduce
-               (fn [game [pos scrap]]
-                 (assoc-tile game pos :scrap scrap))
+               (fn [game pos]
+                 (assoc-tile game pos :scrap (rand-nth [10 9 8 8 8 6 4 4 0])))
                game
-               (zip (for [y (range h) x (range w)] (pos x y)) scrap))
-        blue-pos (pos 4 3)
-        red-pos  (pos 17 3)
+               (for [y (range h)
+                     x (range w)]
+                 (pos x y)))
+        blue-pos (pos (+ 1 (rand-int (quot w 4))) (+ 1 (rand-int (- h 2))))
+        red-pos  (pos (- w 1 (:x blue-pos)) (if (< (rand) 0.5) (:y blue-pos) (- h 1 (:y blue-pos))))
         game (as-> game %
                (assoc-tile % blue-pos
                  :owner :blue
@@ -235,8 +238,8 @@
       (recalc-game %))))
 
 (defn reset-game []
-  (let [algo-blue (algo.mark4/algo :blue)
-        algo-red  (algo.mark3/algo :red)]
+  (let [algo-blue (algo.mark5/algo :blue)
+        algo-red  (algo.mark4/algo :red)]
     (loop [games [(sample-game)]
            moves []]
       (if (> (count games) 100)
