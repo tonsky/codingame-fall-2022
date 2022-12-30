@@ -21,7 +21,7 @@
           ;; move
           (keep
             (fn [tile]
-              (let [ns (->> (neighbours game (:pos tile))
+              (let [ns (->> (neighbour-pos game (:pos tile))
                                  (filter #(pos? (:scrap (get-tile game %)))))]
                 (when-not (empty? ns)
                   [:move player (:units tile) (:pos tile) (rand-nth ns)])))

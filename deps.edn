@@ -9,6 +9,7 @@
  :aliases
  {:profile
   {:jvm-opts
-   ["-Djdk.attach.allowAttachSelf"
+   ["-Dclojure.main.report=stderr"
+    "-Djdk.attach.allowAttachSelf"
     "-XX:+UnlockDiagnosticVMOptions"
     "-XX:+DebugNonSafepoints"]}}}

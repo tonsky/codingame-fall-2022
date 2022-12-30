@@ -12,7 +12,7 @@
                               (not (recycled? game pos)) 1
                               :else                      0))))
         priority-pos  (fn [tgt]
-                        (transduce (map priority-tile) + 0 (neighbours+self game (:pos tgt))))
+                        (transduce (map priority-tile) + 0 (neighbour+self-pos game (:pos tgt))))
         my-clusters   (->> clusters
                         (filter #(zero? (-> % :tiles foe)))
                         (map :positions))
@@ -31,7 +31,7 @@
           (handled pos) plan
           (< scrap 10)  (reduced plan)
           ;; don’t build next to recycler
-          (some #(:recycler? (get-tile game %)) (neighbours game pos)) plan
+          (some #(:recycler? %) (neighbour-tiles game pos)) plan
           :else
           (-> plan
             (update :game assoc-tile pos :recycler? true)
@@ -56,7 +56,7 @@
                      (rand-nth
                        (for [pos       (:positions cluster)
                              :when     (= player (:owner (get-tile game pos)))
-                             neighbour (neighbours game pos)
+                             neighbour (neighbour-pos game pos)
                              :when     (not= player (:owner (get-tile game neighbour)))]
                          pos)))]
     (reduce
@@ -116,7 +116,7 @@
             frontier (set
                        (for [tile      (tile-seq game)
                              :when     (= player (:owner tile))
-                             neighbour (neighbours game (:pos tile))
+                             neighbour (neighbour-pos game (:pos tile))
                              :let      [neighbour (get-tile game neighbour)]
                              :when     (movable? neighbour)
                              :when     (not= player (:owner neighbour))

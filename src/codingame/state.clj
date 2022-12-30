@@ -36,16 +36,19 @@
   (nth [this i]
     (nth this i nil))
   (nth [_ i not-found]
-    (case i 0 x 1 y not-found))
+    (case i
+      0 x
+      1 y
+      not-found))
   
   java.lang.Comparable
   (compareTo [a b]
     (cond
       (identical? a b)  0
-      (< (:x a) (:x b)) -1
-      (> (:x a) (:x b)) 1
-      (< (:y a) (:y b)) -1
-      (> (:y a) (:y b)) 1
+      (< x (:x b))     -1
+      (> x (:x b))      1
+      (< y (:y b))     -1
+      (> y (:y b))      1
       :else             0)))
 
 (def pos ->Pos)
@@ -64,7 +67,16 @@
   (.write ^Writer *out* (str (:y c)))
   (.write ^Writer *out* ")"))
 
-(defrecord Tile [pos owner ^long scrap ^long units ^long units-foe ^boolean recycler? ^boolean dead?])
+  
+(defrecord Tile [pos owner ^long scrap ^long units ^long units-foe ^boolean recycler? ^boolean dead?]
+  clojure.lang.Indexed
+  (nth [this i]
+    (nth this i nil))
+  (nth [_ i not-found]
+    (case i
+      0 (:x pos)
+      1 (:y pos)
+      not-found)))
 
 (defrecord Game [grid ^long width ^long height ^long turn scrap tiles])
 

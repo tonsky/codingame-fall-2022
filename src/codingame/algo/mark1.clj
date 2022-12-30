@@ -71,7 +71,7 @@
             :when (if left?
                     (>= (:x pos) (quot width 3))
                     (< (:x pos) (- width (quot width 3))))
-            :let [around (->> (neighbours+self game pos)
+            :let [around (->> (neighbour+self-pos game pos)
                            (map #(get-tile game %))
                            (remove #(recycled? game (:pos %)))
                            (remove :recycler?)
@@ -96,8 +96,7 @@
                                  (= player (:owner tile)))
                          :when (not (recycler-places pos))
                          :when (not (empty?
-                                      (->> (neighbours game pos)
-                                        (map #(get-tile game %))
+                                      (->> (neighbour-tiles game pos)
                                         (remove #(= 0 (:scrap %)))
                                         (remove #(= player (:owner %)))
                                         (remove :recycler?))))]

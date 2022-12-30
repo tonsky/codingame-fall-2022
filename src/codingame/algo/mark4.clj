@@ -10,7 +10,7 @@
                    (for [tile (tile-seq game)
                        :when (= player (:owner tile))
                        :when (not (:recycler? tile))
-                       :let  [ns  (neighbours game (:pos tile))
+                       :let  [ns  (neighbour-pos game (:pos tile))
                               sur (->> ns
                                     (map #(get-tile game %))
                                     (filter #(= foe (:owner %)))
@@ -48,11 +48,10 @@
     (reduce
       (fn [{:keys [handled scrap] :as plan} cluster]
         (cond+
-          (handled pos) plan
           (< scrap 10)  (reduced plan)
           :let [border (cluster-border game player cluster)]
           (empty? border) plan
-          :let [pos (rand-nth border)]
+          :let [{:keys [pos]} (rand-nth border)]
           :else
           (-> plan
             (update :commands conj [:spawn player 1 pos])
@@ -62,15 +61,14 @@
       my-clusters)))
 
 (defn build [{:keys [player foe side game clusters] :as plan}]
-  (let [priority-tile (fn [pos]
-                        (let [{:keys [scrap]} (get-tile game pos)]
-                          (* scrap
-                            (cond
-                              (recycled? game pos foe)   3
-                              (not (recycled? game pos)) 1
-                              :else                      0))))
-        priority-pos  (fn [tgt]
-                        (transduce (map priority-tile) + 0 (neighbours+self game (:pos tgt))))
+  (let [priority-tile (fn [tile]
+                        (* (:scrap tile)
+                          (cond
+                            (recycled? game tile foe)   3
+                            (not (recycled? game tile)) 1
+                            :else                       0)))
+        priority-nbs  (fn [tile]
+                         (transduce (map priority-tile) + 0 (neighbour+self-tiles game tile)))
         my-clusters   (->> clusters
                         (filter #(zero? (-> % :tiles foe)))
                         (map :positions))
@@ -85,14 +83,14 @@
                                    (not (:recycler? %))
                                    (not (:dead? %))))
                         (remove (fn [tile] (some #(contains? % (:pos tile)) my-clusters)))
-                        (sort-by #(- (priority-pos %))))]
+                        (sort-by #(- (priority-nbs %))))]
     (reduce
       (fn [{:keys [game handled scrap] :as plan} {:keys [pos]}]
         (cond
           (handled pos) plan
           (< scrap 10)  (reduced plan)
           ;; don’t build next to recycler
-          (some #(:recycler? (get-tile game %)) (neighbours game pos)) plan
+          (some #(:recycler? (get-tile game %)) (neighbour-pos game pos)) plan
           :else
           (-> plan
             (update :game assoc-tile pos :recycler? true)
@@ -118,10 +116,9 @@
     (reduce
       (fn [{:keys [handled scrap] :as plan} cluster]
         (cond+
-          (handled pos) plan
           (< scrap 10)  (reduced plan)
           :let [border (->> (cluster-border game player cluster)
-                         (remove handled)
+                         (remove #(handled (:pos %)))
                          shuffle)]
           (empty? border) plan
           :let [units  (min
@@ -129,8 +126,8 @@
                          (-> cluster :units foe (+ 2)))
                 counts (distribute (count border) units)
                 cmds   (map
-                         (fn [pos cnt]
-                           [:spawn player cnt pos])
+                         (fn [tile cnt]
+                           [:spawn player cnt (:pos tile)])
                          border counts)]
           :else
           (-> plan
@@ -144,7 +141,7 @@
   (let [center   (quot (:width game) 2)
         priority (fn [pos]
                    (fn [target]
-                     (let [{:keys [owner units]} (get-tile game target)]
+                     (let [{:keys [owner units]} target]
                        (+
                          (* 20 (dist pos target))
                          (* 10 (cond
@@ -152,31 +149,32 @@
                                  (= :neutral owner)                2
                                  (and (= foe owner) (zero? units)) 3
                                  :else                             4))
-                         (* 1 (abs (- (:x target) center)))))))
+                         (* 1 (abs (- (:x (:pos target)) center)))))))
         frontier (set
                    (for [tile      (tile-seq game)
                          :when     (= player (:owner tile))
-                         neighbour (neighbours game (:pos tile))
-                         :when     (not (handled neighbour))
-                         :let      [neighbour (get-tile game neighbour)]
+                         neighbour (neighbour-tiles game tile)
+                         :when     (not (handled (:pos neighbour)))
                          :when     (movable? neighbour)
                          :when     (not (:dead? neighbour))
                          :when     (not= player (:owner neighbour))
                          ;; don’t go to the tile that will be removed
-                         :when     (or (not (recycled? game (:pos neighbour)))
+                         :when     (or (not (recycled? game neighbour))
                                      (> (:scrap neighbour) 1))]
-                     (:pos neighbour)))]
+                     neighbour))]
     (reduce-kv
       (fn [{:keys [handled] :as plan} pos units]
-        (let [cluster (search #(contains? % pos) (map :positions clusters))]
+        (let [tile    (get-tile game pos)
+              cluster (search #(contains? % tile) (map :positions clusters))]
           (if-some [targets (->> frontier
                               (filter #(cluster %))
-                              (remove handled)
-                              (sort-by (priority pos))
+                              (remove #(handled (:pos %)))
+                              (sort-by (priority tile))
                               (not-empty))]
+            
             (let [cmds (map
                          (fn [target cnt]
-                           [:move player cnt pos target])
+                           [:move player cnt pos (:pos target)])
                          targets (distribute (count targets) units))]
               (-> plan
                 (update :commands into cmds)

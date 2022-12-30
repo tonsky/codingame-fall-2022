@@ -47,6 +47,15 @@
   `(vec
      (for ~@body)))
 
+(defmacro vector-some [& xs]
+  `(persistent!
+     (reduce
+       #(if (some? %2)
+          (conj! %1 %2)
+          %1)
+       (transient [])
+       [~@xs])))
+
 (defn search [pred xs]
   (some #(when (pred %) %) xs))
 
@@ -64,19 +73,9 @@
                 (inc i)
                 (dec units))))))
 
-(defn dist ^long [a b]
-  (+ (long (abs (- (:x a) (:x b))))
-    (long (abs (- (:y a) (:y b))))))
-
-(defn grass [pos]
-  (map->Tile
-    {:pos       pos
-     :owner     :neutral 
-     :scrap     0
-     :units     0
-     :units-foe 0
-     :recycler? false
-     :dead?     false}))
+(defn dist ^long [[x y] [x' y']]
+  (+ (long (abs (- x x')))
+    (long (abs (- y y')))))
 
 (defn opponent [player]
   (case player
@@ -92,26 +91,30 @@
   (map->Game
     {:grid   (forv [y (range h)]
                (forv [x (range w)]
-                 (grass (pos x y))))
+                 (map->Tile
+                   {:pos       (pos x y)
+                    :owner     :neutral 
+                    :scrap     0
+                    :units     0
+                    :units-foe 0
+                    :recycler? false
+                    :dead?     false})))
      :width  w
      :height h
      :turn   0
      :scrap  {:blue 10 :red 10}}))
 
-(defn get-tile [game pos]
+(defn get-tile [game [x y]]
   (-> game
     :grid
-    (nth (:y pos))
-    (nth (:x pos))))
+    (nth y)
+    (nth x)))
 
-(defn set-tile [game pos val]
-  (update game :grid update (:y pos) assoc (:x pos) val))
+(defn assoc-tile [game [x y] & kvs]
+  (apply update game :grid update y update x assoc kvs))
 
-(defn assoc-tile [game pos & kvs]
-  (apply update game :grid update (:y pos) update (:x pos) assoc kvs))
-
-(defn update-tile [game pos f & args]
-  (apply update game :grid update (:y pos) update (:x pos) f args))
+(defn update-tile [game [x y] f & args]
+  (apply update game :grid update y update x f args))
 
 (defn tile-seq [game]
   (for [row   (:grid game)
@@ -119,88 +122,107 @@
         :when (pos? (:scrap tile))]
     tile))
 
-(defn pos-seq [game]
-  (map :pos (tile-seq game)))
-
-(defn inside? [game pos]
-  (let [{:keys [width height]} game
-        {:keys [x y]} pos]
+(defn inside? [game [x y]]
+  (let [{:keys [width height]} game]
     (and
       (<= 0 x)
       (< x width)
       (<= 0 y)
       (< y height))))
 
-(defn neighbours [game [x y]]
-  (let [{:keys [width height]} game]
-    (filterv some?
-      [(when (> x 0)
-         (pos (dec x) y))
-       (when (< (inc x) width)
-         (pos (inc x) y))
-       (when (> y 0)
-         (pos x (dec y)))
-       (when (< (inc y) height)
-         (pos x (inc y)))])))
+(defn when-pred [pred x]
+  (when (pred x)
+    x))
 
-(defn neighbours+self [game pos]
-  (cons pos (neighbours game pos)))
+(defn neighbour-tiles [game [x y]]
+  (let [{:keys [width height]} game
+        movable? #(pos? (:scrap %))]
+    (vector-some
+      (when (> x 0)
+        (when-pred movable?
+          (get-tile game (pos (dec x) y))))
+      (when (< (inc x) width)
+        (when-pred movable?
+          (get-tile game (pos (inc x) y))))
+      (when (> y 0)
+        (when-pred movable?
+          (get-tile game (pos x (dec y)))))
+      (when (< (inc y) height)
+        (when-pred movable?
+          (get-tile game (pos x (inc y))))))))
+
+(defn neighbour+self-tiles [game tile]
+  (conj (neighbour-tiles game tile) tile))
+
+(defn neighbour-pos [game [x y]]
+  (mapv :pos (neighbour-tiles game [x y])))
+
+(defn neighbour+self-pos [game [x y]]
+  (mapv :pos (neighbour+self-tiles game [x y])))
 
 (defn recycled?
-  ([game pos]
-   (let [tile (get-tile game pos)]
-     (and
-       (pos? (:scrap tile))
-       (some #(:recycler? (get-tile game %)) (neighbours+self game pos)))))
-  ([game pos owner]
-   (let [tile (get-tile game pos)]
-     (and
-       (pos? (:scrap tile))
-       (some #(let [tile (get-tile game %)]
-                (and (:recycler? tile) (= (:owner tile) owner))) (neighbours+self game pos))))))
+  ([game tile]
+   (and
+     (pos? (:scrap tile))
+     (some :recycler? (neighbour+self-tiles game tile))))
+  ([game tile owner]
+   (and
+     (pos? (:scrap tile))
+     (some 
+       #(and (:recycler? %) (= (:owner %) owner))
+       (neighbour+self-tiles game tile)))))
+
+(def counter
+  (completing
+    (fn
+      ([] 0)
+      ([acc _]
+       (inc acc)))))
 
 (defn tiles [game owner]
-  (count (filter #(= (:owner %) owner) (tile-seq game))))
+  (transduce
+    (filter #(= (:owner %) owner))
+    counter
+    0
+    (tile-seq game)))
 
 (defn recalc-game [game]
   (let [dead (->> (tile-seq game)
-               (filter #(and (= 1 (:scrap %))
-                          (recycled? game (:pos %)))))]
+               (filter #(and (= 1 (:scrap %)) (recycled? game %))))]
     (as-> game %
-      (reduce
-        #(assoc-tile %1 (:pos %2) :dead? true)
-        % dead)
+      (reduce #(assoc-tile %1 %2 :dead? true) % dead)
       (assoc %
         :tiles {:blue (tiles % :blue)
                 :red  (tiles % :red)}))))
 
-(defn flood [game pos]
-  (loop [reachable #{pos}
-         queue     (conj clojure.lang.PersistentQueue/EMPTY
-                     pos)]
-    (if (empty? queue)
-      reachable
-      (let [pos (peek queue)
-            ns  (->> (neighbours game pos)
-                  (filter #(movable? (get-tile game %)))
-                  (remove reachable))]
-        (recur
-          (into reachable ns)
-          (into (pop queue) ns))))))
+(defn flood [game tile]
+  (let [queue (java.util.ArrayDeque. [(:pos tile)])]
+    (loop [reachable (transient #{(:pos tile)})]
+      (if (.isEmpty queue)
+        (into #{} (map #(get-tile game %)) (persistent! reachable))
+        (let [pos  (.pop queue)
+              tile (get-tile game pos)
+              ns   (into []
+                     (comp
+                       (filter movable?)
+                       (map :pos)
+                       (remove reachable))
+                     (neighbour-tiles game tile))]
+          (.addAll queue ns)
+          (recur (reduce conj! reachable ns)))))))
 
-(defn cluster-units [game player cluster] 
-  (->> cluster
-    (map #(get-tile game %))
-    (filter #(= player (:owner %)))
-    (filter #(pos? (:units %)))
-    (map :units)
-    (reduce + 0)))
+(defn cluster-units [game player cluster]
+  (transduce
+    (comp
+      (filter #(= player (:owner %)))
+      (filter #(pos? (:units %)))
+      (map :units))
+    + 0 cluster))
 
-(defn cluster-tiles [game player cluster] 
-  (->> cluster
-    (map #(get-tile game %))
+(defn cluster-tiles [game player cluster]
+  (transduce
     (filter #(= player (:owner %)))
-    (count)))
+    counter 0 cluster))
 
 (defn cluster-info [game cluster]
   {:positions cluster
@@ -211,29 +233,25 @@
                :neutral (cluster-tiles game :neutral cluster)}})
 
 (defn clusters [game]
-  (loop [clusters  #{}
-         positions (->> (pos-seq game)
-                     (filter #(movable? (get-tile game %)))
-                     set)]
-    (if (empty? positions)
-      clusters
-      (let [cluster (flood game (first positions))]
+  (loop [clusters (transient [])
+         tiles    (into #{} (filter movable?) (tile-seq game))]
+    (if (empty? tiles)
+      (persistent! clusters)
+      (let [cluster (flood game (first tiles))]
         (recur
-          (conj clusters (cluster-info game cluster))
-          (reduce disj positions cluster))))))
+          (conj! clusters (cluster-info game cluster))
+          (reduce disj tiles cluster))))))
 
 (defn cluster-border [game player cluster]
-  (->> (:positions cluster)
-    (filter
-      (fn [pos]
-        (let [tile (get-tile game pos)]
-          (and
-            (= player (:owner tile))
-            (not (:dead? tile))
-            (some
-              (fn [nb]
-                (let [tile (get-tile game nb)]
-                  (and
-                    (pos? (:scrap tile))
-                    (not= player (:owner tile)))))
-              (neighbours game pos))))))))
+  (filter
+    (fn [tile]
+      (and
+        (= player (:owner tile))
+        (not (:dead? tile))
+        (some
+          (fn [nb]
+            (and
+              (pos? (:scrap nb))
+              (not= player (:owner nb))))
+          (neighbour-tiles game tile))))
+    (:positions cluster)))

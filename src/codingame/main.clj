@@ -9,7 +9,6 @@
     [codingame.algo.mark2 :as algo.mark2]
     [codingame.algo.mark3 :as algo.mark3]
     [codingame.algo.mark4 :as algo.mark4]
-    [codingame.algo.mark5 :as algo.mark5]
     [io.github.humbleui.app :as app]
     [io.github.humbleui.canvas :as canvas]
     [io.github.humbleui.core :as core]
@@ -21,49 +20,30 @@
     [io.github.humbleui.skija Color FontStyle Paint Typeface]))
 
 (defn sample-game []
-  (let [w     (+ 12 (rand-int 10))
-        h     (quot w 2)
-        game  (make-game w h)
-        scrap (->> (concat
-                     (repeat 28 0)
-                     (repeat 48 4)
-                     (repeat 14 6)
-                     (repeat 76 8)
-                     (repeat 24 9)
-                     (repeat 20 10))
-                shuffle)
-        game (reduce
-               (fn [game pos]
-                 (assoc-tile game pos :scrap (rand-nth [10 9 8 8 8 6 4 4 0])))
-               game
-               (for [y (range h)
-                     x (range w)]
-                 (pos x y)))
-        blue-pos (pos (+ 1 (rand-int (quot w 4))) (+ 1 (rand-int (- h 2))))
-        red-pos  (pos (- w 1 (:x blue-pos)) (if (< (rand) 0.5) (:y blue-pos) (- h 1 (:y blue-pos))))
-        game (as-> game %
-               (assoc-tile % blue-pos
-                 :owner :blue
-                 :scrap 8)
-               (reduce
-                 (fn [game pos]
-                   (assoc-tile game pos
-                     :owner :blue
-                     :scrap 8
-                     :units 1))
-                 % (neighbours % blue-pos))
-               (assoc-tile % red-pos
-                 :owner :red
-                 :scrap 8)
-               (reduce
-                 (fn [game pos]
-                   (assoc-tile game pos
-                     :owner :red
-                     :scrap 8
-                     :units 1))
-                 % (neighbours % red-pos))
-               (recalc-game %))]
-    game))
+  (let [w        (+ 12 (rand-int 12))
+        h        (quot w 2)
+        game     (make-game w h)
+        game     (reduce
+                   (fn [game pos]
+                     (assoc-tile game pos :scrap (rand-nth [10 9 8 8 8 6 4 4 0])))
+                   game
+                   (for [y (range h)
+                         x (range w)]
+                     (pos x y)))
+        [bx by] [(+ 1 (rand-int (quot w 4))) (+ 1 (rand-int (- h 2)))]
+        [rx ry] [(- w 1 bx) (if (< (rand) 0.5) by (- h 1 by))]]
+    (-> game
+      (assoc-tile [bx by] :owner :blue :scrap 8)
+      (assoc-tile [(dec bx) by] :owner :blue :scrap 8 :units 1)
+      (assoc-tile [(inc bx) by] :owner :blue :scrap 8 :units 1)
+      (assoc-tile [bx (dec by)] :owner :blue :scrap 8 :units 1)
+      (assoc-tile [bx (inc by)] :owner :blue :scrap 8 :units 1)
+      (assoc-tile [rx ry] :owner :red :scrap 8)
+      (assoc-tile [(dec rx) ry] :owner :red :scrap 8 :units 1)
+      (assoc-tile [(inc rx) ry] :owner :red :scrap 8 :units 1)
+      (assoc-tile [rx (dec ry)] :owner :red :scrap 8 :units 1)
+      (assoc-tile [rx (inc ry)] :owner :red :scrap 8 :units 1)
+      (recalc-game))))
 
 (defn warn [game & msg]
   #_(apply println "WARN turn" (:turn game) msg))
@@ -96,6 +76,14 @@
           :recycler? true)
         (update :scrap update player - 10)))))
 
+(defn penultimate [xs]
+  (loop [a  (first xs)
+         b  (fnext xs)
+         xs (nnext xs)]
+    (if (empty? xs)
+      a
+      (recur b (first xs) (next xs)))))
+
 (defn find-path [game from to]
   (loop [dists {from 0}
          prevs {}
@@ -110,61 +98,60 @@
       (= pos to)
       (->> (iterate prevs to)
         (take-while some?)
-        (reverse)
-        (second))
+        (penultimate))
       
       :let [dist' (inc (dists pos))
             [dists' prevs' queue']
             (reduce
-              (fn [[dists prevs queue] n]
-                (let [tile (get-tile game n)]
+              (fn [[dists prevs queue] pos']
+                (let [tile' (get-tile game pos')]
                   (if (or
-                        (= 0 (:scrap tile))
-                        (:recycler? tile)
-                        (<= (dists n Long/MAX_VALUE) dist'))
+                        (= 0 (:scrap tile'))
+                        (:recycler? tile')
+                        (<= (dists pos' Long/MAX_VALUE) dist'))
                     [dists prevs queue]
-                    [(assoc dists n dist')
-                     (assoc prevs n pos)
-                     (assoc queue n (+ dist' (dist n to)))])))
+                    [(assoc dists pos' dist')
+                     (assoc prevs pos' pos)
+                     (assoc queue pos' (+ dist' (dist pos' to)))])))
               [dists prevs (pop queue)]
-              (neighbours game pos))]
+              (neighbour-pos game pos))]
       :else
       (recur dists' prevs' queue'))))
 
 (defmethod exec :move [game [_ player units pos-from pos-to :as cmd]]
-  (let [from (get-tile game pos-from)]
-    (if-some [pos-to' (find-path game pos-from pos-to)]
-      (let [to (get-tile game pos-to')]
-        (cond+
-          (not= player (:owner from))
-          (do (warn game "Can't" cmd "other's units" from) game)
-      
-          (< (:units from) units)
-          (do (warn game "Not enough units to" cmd "from" from) game)
-      
-          (:recycler? to)
-          (do (warn game "Can't" cmd "to recycler" to) game)
-      
-          (= 0 (:scrap to))
-          (do (warn game "Can't" cmd "to grass" to) game)
-      
-          (= :neutral (:owner to))
-          (-> game
-            (update-tile (:pos from) update :units - units)
-            (update-tile (:pos to) update :units + units)
-            (assoc-tile (:pos to)
-              :owner player))
-      
-          (= player (:owner to))
-          (-> game
-            (update-tile (:pos from) update :units - units)
-            (update-tile (:pos to) update :units + units))
-      
-          :else
-          (-> game
-            (update-tile (:pos from) update :units - units)
-            (update-tile (:pos to) update :units-foe + units))))
-      (do (warn game "Not reachable" cmd) game))))
+  (if-some [pos-to' (find-path game pos-from pos-to)]
+    (let [from (get-tile game pos-from)
+          to (get-tile game pos-to')]
+      (cond+
+        (not= player (:owner from))
+        (do (warn game "Can't" cmd "other's units" from) game)
+    
+        (< (:units from) units)
+        (do (warn game "Not enough units to" cmd "from" from) game)
+    
+        (:recycler? to)
+        (do (warn game "Can't" cmd "to recycler" to) game)
+    
+        (= 0 (:scrap to))
+        (do (warn game "Can't" cmd "to grass" to) game)
+    
+        (= :neutral (:owner to))
+        (-> game
+          (update-tile (:pos from) update :units - units)
+          (update-tile (:pos to) update :units + units)
+          (assoc-tile (:pos to)
+            :owner player))
+    
+        (= player (:owner to))
+        (-> game
+          (update-tile (:pos from) update :units - units)
+          (update-tile (:pos to) update :units + units))
+    
+        :else
+        (-> game
+          (update-tile (:pos from) update :units - units)
+          (update-tile (:pos to) update :units-foe + units))))
+    (do (warn game "Not reachable" cmd) game)))
 
 (defmethod exec :spawn [game [_ player units pos :as cmd]]
   (let [tile (get-tile game pos)]
@@ -218,8 +205,8 @@
 (defn proceed [game moves]
   (let [{:keys [grid scrap]} game
         moves         (sort-by priority-fn moves)
-        recycled-blue (filter #(recycled? game % :blue) (pos-seq game))
-        recycled-red  (filter #(recycled? game % :red) (pos-seq game))]
+        recycled-blue (filter #(recycled? game % :blue) (tile-seq game))
+        recycled-red  (filter #(recycled? game % :red)  (tile-seq game))]
     (as-> game %
       (reduce exec % moves)
       (update-owners %)
@@ -227,18 +214,21 @@
       (update % :scrap update :blue + 10 (count recycled-blue))
       (update % :scrap update :red + 10 (count recycled-red))
       (reduce
-        (fn [game pos]
-          (let [tile  (get-tile game pos)
-                tile' (if (> (:scrap tile) 1)
-                        (update tile :scrap dec)
-                        (grass pos))]
-            (set-tile game pos tile')))
+        (fn [game tile]
+          (if (> (:scrap tile) 1)
+            (update-tile game tile update :scrap dec)
+            (assoc-tile game tile
+              :owner     :neutral 
+              :scrap     0
+              :units     0
+              :units-foe 0
+              :recycler? false)))
         %
         (set (concat recycled-blue recycled-red)))
       (recalc-game %))))
 
 (defn reset-game []
-  (let [algo-blue (algo.mark5/algo :blue)
+  (let [algo-blue (algo.mark4/algo :blue)
         algo-red  (algo.mark4/algo :red)]
     (loop [games [(sample-game)]
            moves []]
@@ -337,7 +327,7 @@
       (when recycler?
         (core/draw icon-recycler ctx rect canvas))
     
-      (when (recycled? game pos)
+      (when (recycled? game tile)
         (core/draw icon-recycled ctx rect canvas)))
     
     (doseq [[cmd player & rest] moves]
@@ -375,7 +365,7 @@
 
 (defn paint-tiles [ctx canvas size]
   (canvas/clear canvas 0xFFFFFFFF)
-  (let [step (/ (:x size) (inc (:max @*turn)))
+  (let [step   (/ (:x size) (inc (:max @*turn)))
         vscale (/ (:y size)
                  (reduce max 0
                    (concat
