@@ -1,11 +1,13 @@
 (ns codingame.core
   (:require
-    [codingame.state :refer :all]))
+    [codingame.state :refer :all])
+  (:import
+    [codingame.state Pos]))
 
 ;; core
 
 (defn now []
-  (System/currentTimeMillis))
+  (System/nanoTime))
 
 (def t0
   (now))
@@ -15,7 +17,7 @@
 
 (defn debug [& msg]
   (binding [*out* *err*]
-    (apply println (- (now) t0) "ms" msg)))
+    #_(apply println msg)))
 
 (defmacro spy [obj]
   `(let [res# ~obj]
@@ -25,8 +27,8 @@
 (defmacro measure [msg & body]
   `(let [t#   (now)
          res# (do ~@body)
-         dt#  (- (now) t#)]
-     (debug ~msg dt# "ms")
+         dt#  (-> (now) (- t#) (quot 1000) (/ 1000) (double))]
+     (debug (format "  %.3f ms" dt#) ~msg)
      res#))
 
 (defmacro cond+ [& clauses]
@@ -59,6 +61,12 @@
 (defn search [pred xs]
   (some #(when (pred %) %) xs))
 
+(defn sort-by* [fns xs]
+  (sort-by
+    (fn [x]
+      (mapv #(% x) fns))
+    xs))
+
 (defn distribute [slots units]
   (if (= 0 slots)
     []
@@ -73,9 +81,9 @@
                 (inc i)
                 (dec units))))))
 
-(defn dist ^long [[x y] [x' y']]
-  (+ (long (abs (- x x')))
-    (long (abs (- y y')))))
+(defn dist ^long [^Pos a ^Pos b]
+  (+ (long (abs (- (.-x a) (.-x b))))
+    (long (abs (- (.-y a) (.-y b))))))
 
 (defn opponent [player]
   (case player
@@ -134,31 +142,28 @@
   (when (pred x)
     x))
 
-(defn neighbour-tiles [game [x y]]
-  (let [{:keys [width height]} game
-        movable? #(pos? (:scrap %))]
+(defn neighbour-pos [game [x y :as p]]
+  (let [{:keys [width height]} game]
     (vector-some
       (when (> x 0)
-        (when-pred movable?
-          (get-tile game (pos (dec x) y))))
+        (pos (dec x) y))
       (when (< (inc x) width)
-        (when-pred movable?
-          (get-tile game (pos (inc x) y))))
+        (pos (inc x) y))
       (when (> y 0)
-        (when-pred movable?
-          (get-tile game (pos x (dec y)))))
+        (pos x (dec y)))
       (when (< (inc y) height)
-        (when-pred movable?
-          (get-tile game (pos x (inc y))))))))
+        (pos x (inc y))))))
+
+(defn neighbour+self-pos [game [x y :as p]]
+  (conj (neighbour-pos game [x y]) p))
+
+(defn neighbour-tiles [game [x y :as p]]
+  (->> (neighbour-pos game p) 
+    (map #(get-tile game %))
+    (filterv #(pos? (:scrap %)))))
 
 (defn neighbour+self-tiles [game tile]
   (conj (neighbour-tiles game tile) tile))
-
-(defn neighbour-pos [game [x y]]
-  (mapv :pos (neighbour-tiles game [x y])))
-
-(defn neighbour+self-pos [game [x y]]
-  (mapv :pos (neighbour+self-tiles game [x y])))
 
 (defn recycled?
   ([game tile]
@@ -187,29 +192,31 @@
     (tile-seq game)))
 
 (defn recalc-game [game]
-  (let [dead (->> (tile-seq game)
-               (filter #(and (= 1 (:scrap %)) (recycled? game %))))]
-    (as-> game %
-      (reduce #(assoc-tile %1 %2 :dead? true) % dead)
-      (assoc %
-        :tiles {:blue (tiles % :blue)
-                :red  (tiles % :red)}))))
+  (measure "recalc-game"
+    (let [dead (->> (tile-seq game)
+                 (filter #(and (= 1 (:scrap %)) (recycled? game %))))]
+      (as-> game %
+        (reduce #(assoc-tile %1 %2 :dead? true) % dead)
+        (assoc %
+          :tiles {:blue (tiles % :blue)
+                  :red  (tiles % :red)})))))
 
 (defn flood [game tile]
-  (let [queue (java.util.ArrayDeque. [(:pos tile)])]
-    (loop [reachable (transient #{(:pos tile)})]
+  (let [^java.util.Collection coll [(:pos tile)]
+        queue     (java.util.ArrayDeque. coll)
+        reachable (java.util.HashSet. coll)]
+    (loop []
       (if (.isEmpty queue)
-        (into #{} (map #(get-tile game %)) (persistent! reachable))
+        (into #{} (map #(get-tile game %)) reachable)
         (let [pos  (.pop queue)
-              tile (get-tile game pos)
               ns   (into []
                      (comp
-                       (filter movable?)
-                       (map :pos)
-                       (remove reachable))
-                     (neighbour-tiles game tile))]
+                       (remove #(.contains reachable %))
+                       (filter #(movable? (get-tile game %))))
+                     (neighbour-pos game pos))]
           (.addAll queue ns)
-          (recur (reduce conj! reachable ns)))))))
+          (.addAll reachable ns)
+          (recur))))))
 
 (defn cluster-units [game player cluster]
   (transduce
@@ -255,3 +262,13 @@
               (not= player (:owner nb))))
           (neighbour-tiles game tile))))
     (:positions cluster)))
+
+(defn side [game player]
+  (let [fs (->> (tile-seq game)
+             (filter #(not= :neutral (:owner %)))
+             (filter #(< (:x (:pos %)) (quot (:width game) 2)))
+             (map :owner)
+             (frequencies))]
+    (if (> (get fs player 0) (get fs (opponent player) 0))
+      :left
+      :right)))

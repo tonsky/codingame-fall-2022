@@ -1,3 +1,4 @@
 <svg width="170" height="170" viewBox="0 0 170 170" fill="none" xmlns="http://www.w3.org/2000/svg">
-<circle cx="85" cy="85" r="60" stroke="white" stroke-width="10"/>
+<ellipse cx="85" cy="60" rx="49" ry="16" stroke="white" stroke-width="7"/>
+<path d="M85 76.1446C112.062 76.1446 134 68.9164 134 60V110.855C134 119.772 112.062 127 85 127C57.938 127 36 119.772 36 110.855V60C36 68.9164 57.938 76.1446 85 76.1446Z" fill="white" stroke="white" stroke-width="7"/>
 </svg>

@@ -143,7 +143,7 @@
                    (fn [target]
                      (let [{:keys [owner units]} target]
                        (+
-                         (* 20 (dist pos target))
+                         (* 20 (dist (:pos pos) (:pos target)))
                          (* 10 (cond
                                  (and (= foe owner) (pos? units))  1
                                  (= :neutral owner)                2
@@ -196,15 +196,6 @@
     (-> plan
       (update :commands into commands')
       (update :scrap - (* 10 units)))))
-
-(defn side [game player]
-  (let [fs (->> (tile-seq game)
-             (filter #(< (:x (:pos %)) (quot (:width game) 2)))
-             (map :owner)
-             (frequencies))]
-    (if (> (get fs player 0) (get fs (opponent player) 0))
-      :left
-      :right)))
 
 (defn algo [player]
   (let [*side (volatile! nil)
